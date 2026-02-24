@@ -2,12 +2,13 @@
   <div class="min-h-screen bg-[#f0f0f0] p-4 font-sans text-sm text-black">
     <div class="max-w-[1100px] mx-auto bg-[#f0f0f0] border-2 border-gray-400 shadow-md">
       
-      <fieldset class="border border-gray-400 m-2 p-2 rounded flex items-center gap-2">
-        <legend class="text-xs px-1">檔案操作</legend>
-        <button class="tk-btn" @click="triggerJsonInput">匯入 JSON (測試用)</button>
-        <input type="file" ref="jsonInput" class="hidden" accept=".json" @change="importJson" />
-        <button class="tk-btn ml-4 disabled:opacity-50">載入 Excel (開發中)</button>
-        <span class="ml-4 text-blue-700 font-bold">{{ statusMessage }}</span>
+      <fieldset class="border border-gray-400 m-2 p-2 rounded flex items-center justify-between">
+        <legend class="text-xs px-1">系統狀態</legend>
+        <div class="flex items-center gap-4">
+          <span class="font-bold text-lg ml-2">本學期最新課表</span>
+          <span class="text-blue-700">{{ statusMessage }}</span>
+        </div>
+        <button class="tk-btn mr-2" @click="loadScheduleData">重新載入</button>
       </fieldset>
 
       <div class="m-2 mt-4">
@@ -168,7 +169,7 @@
                   </tr>
                 </tbody>
               </table>
-              <button class="tk-btn w-full" :disabled="!selectedSwapB" @click="executeSwap">確認執行互調</button>
+              <button class="tk-btn w-full" :disabled="!selectedSwapB" @click="executeSwap">確認執行互調 (僅暫存於網頁)</button>
             </fieldset>
           </div>
 
@@ -179,7 +180,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 // --- 介面狀態 ---
 const tabs = [
@@ -188,38 +189,40 @@ const tabs = [
   { id: 'stats', name: '課數排行' }, { id: 'swap', name: '同班互調' }
 ]
 const activeTab = ref('teacher')
-const statusMessage = ref('尚未載入檔案')
+const statusMessage = ref('初始化中...')
 const daysOptions = [
   { val: 1, label: '一' }, { val: 2, label: '二' }, 
   { val: 3, label: '三' }, { val: 4, label: '四' }, { val: 5, label: '五' }
 ]
 
-// --- 核心資料庫 (對應 Python 的 self.teachers & self.schedules) ---
+// --- 核心資料庫 ---
 const dbTeachers = ref({}) 
 const dbSchedules = ref([])
 
-// --- JSON 讀取測試 ---
-const jsonInput = ref(null)
-const triggerJsonInput = () => jsonInput.value.click()
-const importJson = (event) => {
-  const file = event.target.files[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    try {
-      const data = JSON.parse(e.target.result)
-      dbTeachers.value = data.teachers || {}
-      dbSchedules.value = data.schedules || []
-      statusMessage.value = `JSON 載入成功！共 ${Object.keys(dbTeachers.value).length} 位教師，${dbSchedules.value.length} 堂課。`
-      
-      // 初始化下拉選單第一筆
-      if (teacherNames.value.length > 0) selectedTeacher.value = teacherNames.value[0]
-      if (classesList.value.length > 0) selectedClass.value = classesList.value[0]
-    } catch (err) {
-      statusMessage.value = "JSON 格式錯誤！"
-    }
+// --- 自動載入 public/data.json ---
+onMounted(() => {
+  loadScheduleData()
+})
+
+const loadScheduleData = async () => {
+  statusMessage.value = '載入中...'
+  try {
+    // 從 public 資料夾抓取靜態 JSON 檔案
+    const res = await fetch('/data.json')
+    if (!res.ok) throw new Error('找不到檔案')
+    
+    const data = await res.json()
+    dbTeachers.value = data.teachers || {}
+    dbSchedules.value = data.schedules || []
+    statusMessage.value = `載入成功！共 ${Object.keys(dbTeachers.value).length} 位教師，${dbSchedules.value.length} 堂課。`
+    
+    // 初始化下拉選單第一筆
+    if (teacherNames.value.length > 0) selectedTeacher.value = teacherNames.value[0]
+    if (classesList.value.length > 0) selectedClass.value = classesList.value[0]
+  } catch (err) {
+    statusMessage.value = '讀取失敗，請確認 public/data.json 是否存在！'
+    console.error(err)
   }
-  reader.readAsText(file)
 }
 
 // ==========================================
@@ -312,7 +315,6 @@ const findSwapCandidates = () => {
 
   if (!swapA.value) { swapMessage.value = "請先選擇發起老師 A"; return; }
 
-  // 1. 找 A 原本的課
   const courseA_src = dbSchedules.value.find(s => s.teacher === swapA.value && s.day === swapSrcDay.value && s.period === swapSrcPeriod.value)
   if (!courseA_src) { swapMessage.value = `老師 ${swapA.value} 在原時段沒有課！`; return; }
   
@@ -320,28 +322,18 @@ const findSwapCandidates = () => {
   const targetClass = courseA_src.class_name
   if (targetGrade === 'Unknown' || !targetClass) { swapMessage.value = "無法識別該課程的班級，無法互調。"; return; }
 
-  // 2. 檢查 A 目標時段是否空堂
   const hasClassA_dst = dbSchedules.value.some(s => s.teacher === swapA.value && s.day === swapDstDay.value && s.period === swapDstPeriod.value)
   if (hasClassA_dst) { swapMessage.value = `老師 ${swapA.value} 在目標時段已經有課了！`; return; }
 
-  // 3. 找符合條件的 B
   const candidates = []
   Object.keys(dbTeachers.value).forEach(tB => {
     if (tB === swapA.value) return
-    
-    // B 在目標時段必須有同一班的課
     const courseB_dst = dbSchedules.value.find(s => s.teacher === tB && s.day === swapDstDay.value && s.period === swapDstPeriod.value)
     if (!courseB_dst || courseB_dst.grade !== targetGrade || courseB_dst.class_name !== targetClass) return
 
-    // B 在原時段必須空堂
     const hasClassB_src = dbSchedules.value.some(s => s.teacher === tB && s.day === swapSrcDay.value && s.period === swapSrcPeriod.value)
     if (!hasClassB_src) {
-      candidates.push({
-        name: tB,
-        subject: courseB_dst.subject,
-        grade: targetGrade,
-        class_name: targetClass
-      })
+      candidates.push({ name: tB, subject: courseB_dst.subject, grade: targetGrade, class_name: targetClass })
     }
   })
 
@@ -365,13 +357,12 @@ const executeSwap = () => {
     return
   }
   
-  // 執行交換 (修改前端記憶體資料)
   dbSchedules.value[idxA].day = swapDstDay.value
   dbSchedules.value[idxA].period = swapDstPeriod.value
   dbSchedules.value[idxB].day = swapSrcDay.value
   dbSchedules.value[idxB].period = swapSrcPeriod.value
 
-  alert("互調成功！\n資料已更新。")
+  alert("互調成功！\n資料已更新（重整網頁後會還原預設課表）。")
   swapCandidates.value = []
   swapMessage.value = ''
   selectedSwapB.value = ''
