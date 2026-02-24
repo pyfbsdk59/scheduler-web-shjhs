@@ -3,12 +3,17 @@
     <div class="max-w-[1100px] mx-auto bg-[#f0f0f0] border-2 border-gray-400 shadow-md">
       
       <fieldset class="border border-gray-400 m-2 p-2 rounded flex items-center justify-between">
-        <legend class="text-xs px-1">系統狀態</legend>
+        <legend class="text-xs px-1">系統狀態與操作</legend>
         <div class="flex items-center gap-4">
-          <span class="font-bold text-lg ml-2">本學期最新課表</span>
+          <span class="font-bold text-lg ml-2">本學期課表</span>
           <span class="text-blue-700">{{ statusMessage }}</span>
         </div>
-        <button class="tk-btn mr-2" @click="loadScheduleData">重新載入</button>
+        <div class="flex gap-2 mr-2">
+          <button class="tk-btn" @click="triggerJsonInput">手動匯入 JSON</button>
+          <input type="file" ref="jsonInput" class="hidden" accept=".json" @change="importJson" />
+          
+          <button class="tk-btn" @click="loadScheduleData">還原預設課表</button>
+        </div>
       </fieldset>
 
       <div class="m-2 mt-4">
@@ -199,7 +204,7 @@ const daysOptions = [
 const dbTeachers = ref({}) 
 const dbSchedules = ref([])
 
-// --- 自動載入 public/data.json ---
+// --- 初始化載入 public/data.json ---
 onMounted(() => {
   loadScheduleData()
 })
@@ -207,22 +212,46 @@ onMounted(() => {
 const loadScheduleData = async () => {
   statusMessage.value = '載入中...'
   try {
-    // 從 public 資料夾抓取靜態 JSON 檔案
     const res = await fetch('/data.json')
     if (!res.ok) throw new Error('找不到檔案')
     
     const data = await res.json()
     dbTeachers.value = data.teachers || {}
     dbSchedules.value = data.schedules || []
-    statusMessage.value = `載入成功！共 ${Object.keys(dbTeachers.value).length} 位教師，${dbSchedules.value.length} 堂課。`
+    statusMessage.value = `預設課表載入成功！(${Object.keys(dbTeachers.value).length} 位教師，${dbSchedules.value.length} 堂課)`
     
-    // 初始化下拉選單第一筆
     if (teacherNames.value.length > 0) selectedTeacher.value = teacherNames.value[0]
     if (classesList.value.length > 0) selectedClass.value = classesList.value[0]
   } catch (err) {
     statusMessage.value = '讀取失敗，請確認 public/data.json 是否存在！'
     console.error(err)
   }
+}
+
+// --- 手動匯入自訂 JSON ---
+const jsonInput = ref(null)
+const triggerJsonInput = () => jsonInput.value.click()
+
+const importJson = (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result)
+      dbTeachers.value = data.teachers || {}
+      dbSchedules.value = data.schedules || []
+      statusMessage.value = `自訂 JSON 匯入成功！(${Object.keys(dbTeachers.value).length} 位教師，${dbSchedules.value.length} 堂課)`
+      
+      if (teacherNames.value.length > 0) selectedTeacher.value = teacherNames.value[0]
+      if (classesList.value.length > 0) selectedClass.value = classesList.value[0]
+    } catch (err) {
+      statusMessage.value = "JSON 格式錯誤！"
+    }
+    // 允許重複選取同一個檔案
+    event.target.value = ''
+  }
+  reader.readAsText(file)
 }
 
 // ==========================================
@@ -362,7 +391,7 @@ const executeSwap = () => {
   dbSchedules.value[idxB].day = swapSrcDay.value
   dbSchedules.value[idxB].period = swapSrcPeriod.value
 
-  alert("互調成功！\n資料已更新（重整網頁後會還原預設課表）。")
+  alert("互調成功！\n資料已更新（重整網頁或點擊還原預設會恢復）。")
   swapCandidates.value = []
   swapMessage.value = ''
   selectedSwapB.value = ''
@@ -371,7 +400,7 @@ const executeSwap = () => {
 
 <style scoped>
 .tk-btn {
-  @apply px-3 py-1 bg-[#f0f0f0] border border-gray-400 shadow-[1px_1px_2px_rgba(0,0,0,0.2)] active:shadow-none active:translate-y-[1px] text-black cursor-pointer;
+  @apply px-3 py-1 bg-[#f0f0f0] border border-gray-400 shadow-[1px_1px_2px_rgba(0,0,0,0.2)] active:shadow-none active:translate-y-[1px] text-black cursor-pointer hover:bg-[#e0e0e0];
 }
 .tk-select {
   @apply border border-gray-400 bg-white px-2 py-1 outline-none focus:border-blue-500;
